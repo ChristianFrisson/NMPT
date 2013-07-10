@@ -1,0 +1,3 @@
+<map id="G" name="G">
+<area shape="rect" id="node1" href="$class_multinomial_observation_model.html" title="Auxilliary Tool: Multionomial Observation Model, as described in Butko and Movellan, CVPR 2009 (see Related Publications). This data structure maintains the mapping between object detector output and the probability that the target object is located at every grid&#45;cell." alt="" coords="5,5,216,35"/>
+</map>

@@ -1,0 +1,4 @@
+<map id="G" name="G">
+<area shape="rect" id="node2" href="$class_open_c_v_haar_detector.html" title="Auxilliary Tool: A specific object detector that uses OpenCV&#39;s Haar Cascade Classifier to detect ..." alt="" coords="5,85,165,115"/>
+<area shape="rect" id="node4" href="$class_object_detector.html" title="Auxilliary Tool: A virtual class for providing the skeleton for specific object detectors." alt="" coords="27,5,144,35"/>
+</map>

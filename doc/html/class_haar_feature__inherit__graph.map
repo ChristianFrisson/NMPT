@@ -1,0 +1,4 @@
+<map id="G" name="G">
+<area shape="rect" id="node2" href="$class_box_feature.html" title="Auxilliary Tool: A linear feature that uses the &quot;Integral &#160;Image&quot; trick to efficiently eval..." alt="" coords="9,83,103,112"/>
+<area shape="rect" id="node4" href="$class_feature.html" title="Auxilliary Tool: A purely virtual class for providing the skeleton for specific features. This allows different features to be manipulated using a common set of tools." alt="" coords="21,5,91,35"/>
+</map>

@@ -1,0 +1,4 @@
+<map id="G" name="G">
+<area shape="rect" id="node5" href="$class_haar_feature2.html" title="Auxilliary Tool: A linear feature that uses Haar Wavelets, which are a certain kind of box filter..." alt="" coords="5,160,115,189"/>
+<area shape="rect" id="node2" href="$class_feature2.html" title="Auxilliary Tool: A purely virtual class for providing the skeleton for specific features. This allows different features to be manipulated using a common set of tools." alt="" coords="21,5,99,35"/>
+</map>

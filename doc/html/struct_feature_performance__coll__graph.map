@@ -1,0 +1,4 @@
+<map id="G" name="G">
+<area shape="rect" id="node2" href="$class_feature.html" title="Auxilliary Tool: A purely virtual class for providing the skeleton for specific features. This allows different features to be manipulated using a common set of tools." alt="" coords="5,5,75,35"/>
+<area shape="rect" id="node4" href="$struct_performance_metrics.html" title="Auxilliary Tool: A data structure that keeps track of how a classifier (specifically a cascaded class..." alt="" coords="99,5,248,35"/>
+</map>

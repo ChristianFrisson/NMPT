@@ -1,0 +1,7 @@
+<map id="G" name="G">
+<area shape="rect" id="node2" href="$class_convolutional_logistic_policy.html" title="Auxilliary Tool: A class for implementing convolutional logistic policies, which were first used in t..." alt="" coords="5,181,197,211"/>
+<area shape="rect" id="node4" href="$class_multinomial_observation_model.html" title="Auxilliary Tool: Multionomial Observation Model, as described in Butko and Movellan, CVPR 2009 (see Related Publications). This data structure maintains the mapping between object detector output and the probability that the target object is located at every grid&#45;cell." alt="" coords="221,181,432,211"/>
+<area shape="rect" id="node6" href="$class_image_patch_pyramid.html" title="Auxilliary Tool: The main data structure for the MIPOMDP algorithm. It is reponsible for generating t..." alt="" coords="456,181,605,211"/>
+<area shape="rect" id="node8" href="$class_open_c_v_haar_detector.html" title="Auxilliary Tool: A specific object detector that uses OpenCV&#39;s Haar Cascade Classifier to detect ..." alt="" coords="451,85,611,115"/>
+<area shape="rect" id="node10" href="$class_object_detector.html" title="Auxilliary Tool: A virtual class for providing the skeleton for specific object detectors." alt="" coords="472,5,589,35"/>
+</map>

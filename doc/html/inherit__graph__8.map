@@ -1,0 +1,5 @@
+<map id="G" name="G">
+<area shape="rect" id="node1" href="$class_feature2.html" title="Auxilliary Tool: A purely virtual class for providing the skeleton for specific features. This allows different features to be manipulated using a common set of tools." alt="" coords="7,5,84,35"/>
+<area shape="rect" id="node3" href="$class_box_feature2.html" title="Auxilliary Tool: A linear feature that uses the &quot;Integral &#160;Image&quot; trick to efficiently eval..." alt="" coords="135,5,236,35"/>
+<area shape="rect" id="node5" href="$class_haar_feature2.html" title="Auxilliary Tool: A linear feature that uses Haar Wavelets, which are a certain kind of box filter..." alt="" coords="287,5,396,35"/>
+</map>

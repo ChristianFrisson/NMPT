@@ -1,0 +1,1173 @@
+/*
+ *  InternalMotionModel.cpp
+ *  OpenCV
+ *
+ *  Created by Nicholas Butko on 2/10/10.
+ *  Copyright 2010 Apple Inc. All rights reserved.
+ *
+ */
+
+#include "InternalMotionModel.h"
+
+InternalMotionModel::InternalMotionModel(int numActuators, CvSize obsSize) {
+	
+	croppedImage = NULL; 
+	croppedVariance = NULL; 
+	cMat = NULL; 
+	features = NULL; 
+	tau = NULL; 
+	matMNxMNa = NULL; 
+	matMNxMNb = NULL; 
+	matMNxNa = NULL; 
+	matMNx1a = NULL; 
+	matNxNa = NULL; 
+	matNx1a = NULL; 
+	matNx1b = NULL; 
+	mat1x1a = NULL; 
+	alpha = NULL; 
+	alphaSigma = NULL; 
+	alphaR = NULL; 
+	alphaQ = NULL; 
+	lambda = NULL; 
+	lambdaSigma = NULL; 
+	
+	lambdaSigmaGradX = NULL;
+	lambdaSigmaGradY = NULL; 
+	lambdaGradX = NULL; 
+	lambdaGradY = NULL; 
+	lambdaGradSigmaInvX = NULL;
+	lambdaGradSigmaInvY = NULL; 
+	lambdaSigmaGradSigmaInvX = NULL; 
+	lambdaSigmaGradSigmaInvY = NULL;	
+	lambdaSigmaGradSigmaInvSquaredX = NULL;
+	lambdaSigmaGradSigmaInvSquaredY = NULL; 
+	
+	padFactor = 7.0; 
+	muLambdaPrior = 0.5; 
+	sigmaSquaredLambdaPrior = 0.25; 
+	
+	setNumActuators(numActuators); 
+	setObsSize(obsSize); 
+	setRSquaredLambda();
+	setQSquaredLambda(); 
+	setUseRetinalCoordinates(1); 
+}
+
+InternalMotionModel::~InternalMotionModel() {
+	
+	cvReleaseMat(&cMat); 
+	cvReleaseMat(&features);
+	cvReleaseMat(&tau); 
+	cvReleaseMat(&alpha); 
+	cvReleaseMat(&alphaSigma); 
+	cvReleaseMat(&alphaR); 
+	cvReleaseMat(&alphaQ); 
+	cvReleaseMat(&matNx1a); 
+	cvReleaseMat(&matNx1b); 
+	cvReleaseMat(&matMNxNa); 
+	cvReleaseMat(&matMNx1a);
+	cvReleaseMat(&matMNxMNa); 
+	cvReleaseMat(&matMNxMNb); 
+	cvReleaseMat(&matNxNa); 
+	cvReleaseMat(&mat1x1a); 
+	cvReleaseImage(&croppedImage); 
+	cvReleaseImage(&croppedVariance); 
+	cvReleaseImage(&lambda); 
+	cvReleaseImage(&lambdaSigma); 	
+	cvReleaseImage(&lambdaSigmaGradX);
+	cvReleaseImage(&lambdaSigmaGradY);
+	cvReleaseImage(&lambdaGradX);
+	cvReleaseImage(&lambdaGradY);
+	cvReleaseImage(&lambdaGradSigmaInvX);
+	cvReleaseImage(&lambdaGradSigmaInvY);
+	cvReleaseImage(&lambdaSigmaGradSigmaInvX);
+	cvReleaseImage(&lambdaSigmaGradSigmaInvY);
+	cvReleaseImage(&lambdaSigmaGradSigmaInvSquaredX);
+	cvReleaseImage(&lambdaSigmaGradSigmaInvSquaredY);
+}
+
+void InternalMotionModel::setUseRetinalCoordinates(int yesorno) {
+	useRetinalCoordinates = yesorno; 
+}
+
+void InternalMotionModel::setNumActuators(int num) {
+	numActuators = num; 
+	numMotionFeatures = num+1; //x, y, x^2, y^2, 1
+	numTransformVals = 2;  //tx, ty
+	
+	int mn = numMotionFeatures*numTransformVals;
+	
+	cvReleaseMat(&cMat); 
+	cvReleaseMat(&features);
+	cvReleaseMat(&tau); 
+	cvReleaseMat(&alpha); 
+	cvReleaseMat(&alphaSigma); 
+	cvReleaseMat(&alphaR); 
+	cvReleaseMat(&alphaQ); 
+	cvReleaseMat(&matNx1a); 
+	cvReleaseMat(&matNx1b); 
+	cvReleaseMat(&mat1x1a); 
+	cvReleaseMat(&matMNxNa); 
+	cvReleaseMat(&matMNxMNa); 
+	cvReleaseMat(&matMNxMNb); 
+	cvReleaseMat(&matMNx1a); 
+	cvReleaseMat(&matNxNa); 
+	
+	cMat = cvCreateMat(numTransformVals, mn, CV_64FC1);  
+	features = cvCreateMat(numMotionFeatures, 1, CV_64FC1);  
+	tau = cvCreateMat(numTransformVals, 1, CV_64FC1); 	
+	matNx1a = cvCreateMat(numTransformVals, 1, CV_64FC1); 
+	matNx1b = cvCreateMat(numTransformVals, 1, CV_64FC1); 
+	mat1x1a = cvCreateMat(1, 1, CV_64FC1); 
+	matMNxNa = cvCreateMat(mn, numTransformVals,  CV_64FC1); 
+	matMNxMNa = cvCreateMat(mn, mn,  CV_64FC1); 
+	matMNxMNb = cvCreateMat(mn, mn,  CV_64FC1); 
+	matMNx1a = cvCreateMat(mn, 1,  CV_64FC1); 
+	matNxNa = cvCreateMat(numTransformVals, numTransformVals,  CV_64FC1); 
+	
+	alpha = cvCreateMat(mn, 1, CV_64FC1);  
+	alphaSigma = cvCreateMat(mn, mn, CV_64FC1);  
+	alphaR = cvCreateMat(mn, mn, CV_64FC1);  
+	alphaQ = cvCreateMat(numTransformVals, numTransformVals, CV_64FC1);   // motion reliability parameter, n x n	
+	
+	setMuAlphaPrior(0.0);
+	setRAlpha(1.0);
+	setQAlpha(1.0);
+	setSigmaAlphaPrior(1.0); 
+}
+
+void InternalMotionModel::setObsSize(CvSize s) {
+	
+	obsSize = s; 	
+	cvReleaseImage(&croppedImage); 
+	cvReleaseImage(&croppedVariance); 
+	croppedImage = cvCreateImage(obsSize, IPL_DEPTH_64F, 1); 
+	croppedVariance = cvCreateImage(obsSize, IPL_DEPTH_64F, 1); 
+	setWorldSizePadFactor(padFactor); 
+	
+	
+	
+	//setLambdaPrior(); 
+}
+
+
+void InternalMotionModel::setMuAlphaPrior(double vectorVal) {
+	cvSet(alpha, cvRealScalar(vectorVal)); 
+}
+
+
+
+void InternalMotionModel::setMuAlphaPrior(CvMat* alphaPrior) {
+	if (alphaPrior != NULL) {
+		cvCopy(alphaPrior, alpha);
+	} else {
+		cvSetZero(alpha); 
+	}
+}
+
+void InternalMotionModel::setSigmaAlphaPrior(CvMat* alphaSigmaPrior) {
+	if (alphaSigmaPrior != NULL) {
+		cvCopy(alphaSigmaPrior, alphaSigma);
+	} else {
+		setSigmaAlphaPrior(1.0); 
+	}
+}
+
+void InternalMotionModel::setSigmaAlphaPrior(double diagval) {
+	cvSetIdentity(alphaSigma, cvRealScalar(diagval)); 
+}
+
+void InternalMotionModel::setQAlpha(CvMat* alphaQVal){
+	if (alphaQVal != NULL) {
+		cvCopy(alphaQVal, alphaQ);
+	} else {
+		setQAlpha(1.0);   
+	}
+}
+
+void InternalMotionModel::setQAlpha(double diagval){	
+	cvSetIdentity(alphaQ, cvRealScalar(diagval)); 
+}
+
+
+void InternalMotionModel::setRAlpha(CvMat* alphaRVal){
+	if (alphaRVal != NULL) {
+		cvCopy(alphaRVal, alphaR);
+	} else {
+		setRAlpha(1.0); 
+	}
+}
+
+
+void InternalMotionModel::setRAlpha(double diagval){
+	cvSetIdentity(alphaR, cvRealScalar(diagval)); 
+	
+}
+
+void InternalMotionModel::setMuLambdaPrior(double val) {
+	CvSize s = obsSize; 
+	s.width = s.width*padFactor; 
+	s.height = s.height*padFactor; 
+	
+	muLambdaPrior = val; 
+	
+	cvReleaseImage(&lambda); 
+	lambda = cvCreateImage(s, IPL_DEPTH_64F, 1); 
+	cvSet(lambda, cvRealScalar(muLambdaPrior)); 
+	
+	cvReleaseImage(&lambdaGradX);
+	cvReleaseImage(&lambdaGradY);
+	cvReleaseImage(&lambdaGradSigmaInvX);
+	cvReleaseImage(&lambdaGradSigmaInvY);
+	lambdaGradX = cvCreateImage(s, IPL_DEPTH_64F, 1);  
+	lambdaGradY = cvCreateImage(s, IPL_DEPTH_64F, 1);  
+	lambdaGradSigmaInvX = cvCreateImage(s, IPL_DEPTH_64F, 1);;
+	lambdaGradSigmaInvY = cvCreateImage(s, IPL_DEPTH_64F, 1);  
+	cvSetZero(lambdaGradX);
+	cvSetZero(lambdaGradY);
+	cvSetZero(lambdaGradSigmaInvX);
+	cvSetZero(lambdaGradSigmaInvY);
+	
+}
+
+void InternalMotionModel::setSigmaSquaredLambdaPrior(double val) {
+	CvSize s = obsSize; 
+	s.width = s.width*padFactor; 
+	s.height = s.height*padFactor; 
+	
+	sigmaSquaredLambdaPrior = val; 
+	
+	cvReleaseImage(&lambdaSigma); 
+	lambdaSigma = cvCreateImage(s, IPL_DEPTH_64F, 1); 
+	cvSet(lambdaSigma, cvRealScalar(sigmaSquaredLambdaPrior));
+ 	sigmaDAccumulated = sigmaSquaredLambdaPrior; 
+	
+	cvReleaseImage(&lambdaSigmaGradX);
+	cvReleaseImage(&lambdaSigmaGradY);
+	cvReleaseImage(&lambdaSigmaGradSigmaInvX);
+	cvReleaseImage(&lambdaSigmaGradSigmaInvY);
+	cvReleaseImage(&lambdaSigmaGradSigmaInvSquaredX);
+	cvReleaseImage(&lambdaSigmaGradSigmaInvSquaredY);
+	lambdaSigmaGradX = cvCreateImage(s, IPL_DEPTH_64F, 1); 
+	lambdaSigmaGradY = cvCreateImage(s, IPL_DEPTH_64F, 1);  
+	lambdaSigmaGradSigmaInvX = cvCreateImage(s, IPL_DEPTH_64F, 1);  
+	lambdaSigmaGradSigmaInvY = cvCreateImage(s, IPL_DEPTH_64F, 1); 	
+	lambdaSigmaGradSigmaInvSquaredX = cvCreateImage(s, IPL_DEPTH_64F, 1); 
+	lambdaSigmaGradSigmaInvSquaredY = cvCreateImage(s, IPL_DEPTH_64F, 1);  
+	cvSetZero(lambdaSigmaGradX);
+	cvSetZero(lambdaSigmaGradY);
+	cvSetZero(lambdaSigmaGradSigmaInvX);
+	cvSetZero(lambdaSigmaGradSigmaInvY);
+	cvSetZero(lambdaSigmaGradSigmaInvSquaredX);
+	cvSetZero(lambdaSigmaGradSigmaInvSquaredY);
+}
+
+void InternalMotionModel::setWorldSizePadFactor(double val) {
+	padFactor = val; 
+	
+	setMuLambdaPrior(muLambdaPrior); 
+	setSigmaSquaredLambdaPrior(sigmaSquaredLambdaPrior); 
+}
+
+/*
+ void InternalMotionModel::setLambdaPrior(double val, double std, int padFactor) {
+ cvReleaseImage(&lambda); 
+ cvReleaseImage(&lambdaSigma); 
+ CvSize s = obsSize; 
+ s.width = s.width*padFactor; 
+ s.height = s.height*padFactor; 
+ 
+ lambda = cvCreateImage(s, IPL_DEPTH_64F, 1); 
+ lambdaSigma = cvCreateImage(s, IPL_DEPTH_64F, 1); 
+ 
+ cvSet(lambda, cvRealScalar(val)); 
+ cvSet(lambdaSigma, cvRealScalar(std*std)); 	
+ }
+ */
+
+void InternalMotionModel::setRSquaredLambda(double std) {
+	sigmaD = std;
+	//sigmaDAccumulated = std; 
+}
+
+void InternalMotionModel::setQSquaredLambda(double std) {
+	lambdaQ = std;
+}
+
+void InternalMotionModel::getMotionFeatures(CvMat* action, CvMat* features) {
+	int i; 
+	int ind = 0; 
+	for (i = 0; i < numActuators; i++) {
+		cvSet2D(features, ind, 0, cvGet2D(action, i, 0)); 
+		ind++; 
+	}
+	/*
+	 for (i = 0; i < numActuators; i++) {
+	 cvSet2D(features, ind, 0, cvRealScalar(cvGet2D(action, i, 0).val[0]*cvGet2D(action, i, 0).val[0]));
+	 ind++;
+	 }*/
+	cvSet2D(features,ind,0,cvRealScalar(1));
+}
+
+void InternalMotionModel::getCMatFromFeatures(CvMat* features, CvMat* cMat){
+	cvSetZero(cMat); 
+	for (int i = 0; i < numTransformVals; i++) {
+		for (int j = 0; j < numMotionFeatures; j++) {
+			cvSet2D(cMat, i, j+i*numMotionFeatures, cvGet2D(features, j, 0));
+		}
+	}
+}
+
+void InternalMotionModel::getLambdaForTransform(CvMat* tau, IplImage* image, IplImage* variance){
+	//Copies a region of lambda and lambdaSigma to "image" and "variance"
+	
+	if (_IMM_DEBUG) cout << "Getting image at transform." << endl; 
+	int tx = cvGetReal2D(tau, 0, 0); 
+	int ty = cvGetReal2D(tau, 1, 0); 
+	int bigw = lambda->width; 
+	int bigh = lambda->height; 
+	
+	CvRect roi = cvRect(bigw/2-obsSize.width/2+tx, bigh/2-obsSize.height/2+ty, 
+						obsSize.width, obsSize.height); 
+	cvSetImageROI(lambda, roi); 
+	cvCopy(lambda, image);
+	cvResetImageROI(lambda); 
+	
+	cvSetImageROI(lambdaSigma, roi); 
+	cvCopy(lambdaSigma, variance);
+	cvResetImageROI(lambdaSigma); 
+	if (_IMM_DEBUG) cout << "Got image at transform." << endl;
+}
+
+likelihood InternalMotionModel::motionModelLogLikelihood(CvMat* tau, CvMat* action) {
+	likelihood retval; 
+	getMotionFeatures(action, features); 
+	getCMatFromFeatures(features, cMat); 
+	
+	//matNx1a = c*alpha
+	cvGEMM(cMat, alpha, 1, NULL, 1, matNx1a, 0); 
+	
+	//matNx1a = tau-c*alpha
+	cvSub(tau, matNx1a, matNx1a); 
+	
+	//matMNxNa = S*Ct
+	cvGEMM(alphaSigma, cMat, 1, NULL, 1, matMNxNa, CV_GEMM_B_T); 
+	
+	//matNxNa = (C*S*Ct+Q)^-1
+	cvGEMM(cMat, matMNxNa, 1, alphaQ, 1, matNxNa, 0); 
+	cvInvert(matNxNa, matNxNa);
+	
+	//matNxNb = (C*S*Ct+Q)^-1 * (tau-c*alpha)
+	cvGEMM(matNxNa, matNx1a, 1, NULL, 1, matNx1b, 0); 
+	retval.xgrad = -cvGetReal2D(matNx1b, 0, 0); 
+	retval.ygrad = -cvGetReal2D(matNx1b, 1, 0); 
+	
+	//mat1x1a = (tau-c*alpha)T * (C*S*Ct+Q)^-1 * (tau-c*alpha)
+	cvGEMM(matNx1a, matNx1b, 1, NULL, 1, mat1x1a, CV_GEMM_A_T); 
+	
+	retval.val =  -0.5 * cvGetReal2D(mat1x1a, 0, 0); 
+	
+	return retval; 
+}
+
+likelihood InternalMotionModel::sensorModelLogLikelihood(CvMat* tau, IplImage* seenImage) {
+	
+	
+	if (_IMM_DEBUG) cout << "Getting sensor likelihood." << endl; 
+	int tx = cvGetReal2D(tau, 0, 0); 
+	int ty = cvGetReal2D(tau, 1, 0); 
+	int bigw = lambda->width; 
+	int bigh = lambda->height; 
+	
+	CvRect roi = cvRect(bigw/2-obsSize.width/2+tx, bigh/2-obsSize.height/2+ty, 
+						obsSize.width, obsSize.height); 
+	
+	cvSetImageROI(lambdaSigmaGradX, cvRect(roi.x+1,roi.y+1,roi.width-2, roi.height-2));
+	double mn, mx;
+	CvPoint mnp, mxp; 
+	cvMinMaxLoc(lambdaSigmaGradX, &mn, &mx, &mnp, &mxp); 
+	cvResetImageROI(lambdaSigmaGradX); 
+	
+	if (_IMM_DEBUG) cout << "Found interesting point point " << mxp.x+1 << ", " << mxp.y+1 << " with variance grad " << mx << endl; 
+	
+	int cx = bigw/2+tx-obsSize.width/2+mxp.x+1; 
+	int cy = bigh/2+ty-obsSize.height/2+mxp.y+1; 
+	
+	int cx2 = mxp.x+1;//obsSize.width/2; 
+	int cy2 = mxp.y+1;//obsSize.height/2; 
+	likelihood retval; 
+	
+	if (_IMM_DEBUG) cout << "Comparing lambda point " << cx << ", " << cy << " to seen-image point " << cx2 << ", " <<cy2 << endl; 
+	
+	
+	cvSetImageROI(lambdaGradSigmaInvX, roi); 
+	cvSetImageROI(lambdaGradSigmaInvY, roi); 
+	cvSetImageROI(lambdaSigmaGradSigmaInvX, roi); 
+	cvSetImageROI(lambdaSigmaGradSigmaInvY, roi); 
+	cvSetImageROI(lambdaSigmaGradSigmaInvSquaredX, roi); 
+	cvSetImageROI(lambdaSigmaGradSigmaInvSquaredY, roi); 
+	
+	retval.xgrad = 0; 
+	retval.ygrad = 0; 
+	
+	if (_IMM_DEBUG) cout << "croppedImage = seen-predicted" << endl; 
+	getLambdaForTransform(tau, croppedImage, croppedVariance); 
+	cvSub(seenImage, croppedImage, croppedImage);
+	
+	if (_IMM_DEBUG) cout << "seenImage has size " << seenImage->width << "x"<< seenImage->height << endl; 
+	if (_IMM_DEBUG) cout << "lambda has size " << lambda->width << "x"<< lambda->height << endl; 
+	cvResetImageROI(lambda);
+	double diff = (cvGetReal2D(seenImage, cy2, cx2) - cvGetReal2D(lambda, cy, cx)); 
+	double diffx1 = (cvGetReal2D(seenImage, cy2, cx2) - cvGetReal2D(lambda, cy, cx-1)); 
+	double diffx2 = (cvGetReal2D(seenImage, cy2, cx2) - cvGetReal2D(lambda, cy, cx+1)); 
+	double diffy1 = (cvGetReal2D(seenImage, cy2, cx2) - cvGetReal2D(lambda, cy-1, cx)); 
+	double diffy2 = (cvGetReal2D(seenImage, cy2, cx2) - cvGetReal2D(lambda, cy+1, cx)); 
+	
+	if (_IMM_DEBUG) cout << "croppedVariance has size " << croppedVariance->width << "x"<< croppedVariance->height << endl; 
+	double sig2 = cvGetReal2D(croppedVariance, cy2, cx2)+lambdaQ; 
+	double sig2x1 = cvGetReal2D(croppedVariance, cy2, cx2-1)+lambdaQ; 
+	double sig2x2 = cvGetReal2D(croppedVariance, cy2, cx2+1)+lambdaQ; 
+	double sig2y1 = cvGetReal2D(croppedVariance, cy2-1, cx2)+lambdaQ; 
+	double sig2y2 = cvGetReal2D(croppedVariance, cy2+1, cx2)+lambdaQ; 
+	
+	
+	if (_IMM_DEBUG) cout << "diff is " << diff << " and in croppedImage it's " << cvGetReal2D(croppedImage, cy2, cx2) << endl; 
+	if (_IMM_DEBUG) cout << "diff^2 grad is " << (diffx2*diffx2-diffx1*diffx1)/2.0 << ", " << (diffy2*diffy2-diffy1*diffy1)/2.0; 
+	if (_IMM_DEBUG) cout << "; it's estimated as " << -diff*cvGetReal2D(lambdaGradX, cy, cx) << ", " << -diff*cvGetReal2D(lambdaGradY, cy, cx) ; 
+	if (_IMM_DEBUG) cout << "; The ratio is " << (diffx2*diffx2-diffx1*diffx1)/2.0/(-diff*cvGetReal2D(lambdaGradX, cy, cx)) <<", " << (diffy2*diffy2-diffy1*diffy1)/2.0/(-diff*cvGetReal2D(lambdaGradY, cy, cx)) << endl; 
+	
+	cvResetImageROI(lambdaGradSigmaInvX); 
+	cvResetImageROI(lambdaGradSigmaInvY); 
+	if (_IMM_DEBUG) cout << "I expect lGSIX to have a value of " << cvGetReal2D(lambdaGradX, cy, cx)/sig2/2.0 << " and really it has " << cvGetReal2D(lambdaGradSigmaInvX, cy, cx)  << endl; 
+	if (_IMM_DEBUG) cout << "I expect lGSIY to have a value of " << cvGetReal2D(lambdaGradY, cy, cx)/sig2/2.0 << " and really it has " << cvGetReal2D(lambdaGradSigmaInvY, cy, cx)  << endl; 
+	
+	cvSetImageROI(lambdaGradSigmaInvX, roi); 
+	cvSetImageROI(lambdaGradSigmaInvY, roi); 
+	if (_IMM_DEBUG) cout << "I expect lGSIX to have a value of " << cvGetReal2D(lambdaGradX, cy, cx)/sig2/2.0 << " and really it has " << cvGetReal2D(lambdaGradSigmaInvX, cy2, cx2)  << endl; 
+	if (_IMM_DEBUG) cout << "I expect lGSIY to have a value of " << cvGetReal2D(lambdaGradY, cy, cx)/sig2/2.0 << " and really it has " << cvGetReal2D(lambdaGradSigmaInvY, cy2, cx2)  << endl; 
+	
+	if (_IMM_DEBUG) cout << "computed deriv first 1/2 term" << endl; 
+	IplImage* diffim = cvCloneImage(croppedImage); 
+	cvMul(diffim, lambdaGradSigmaInvX, diffim); 
+	double xg1 = cvGetReal2D(diffim, cy2, cx2);
+	retval.xgrad = retval.xgrad+cvSum(diffim).val[0]; 
+	cvMul(croppedImage, lambdaGradSigmaInvY, diffim); 
+	double yg1 = cvGetReal2D(diffim, cy2, cx2);
+	retval.ygrad = retval.ygrad+cvSum(diffim).val[0]; 
+	
+	
+	
+	double exg1 = ((-.5*diffx2*diffx2/sig2) - (-.5*diffx1*diffx1/sig2))/2.0;
+	double eyg1 = ((-.5*diffy2*diffy2/sig2) - (-.5*diffy1*diffy1/sig2))/2.0;  
+	if (_IMM_DEBUG) cout << "diff^2/sig2 grad is " << exg1 << ", " <<eyg1; 
+	if (_IMM_DEBUG) cout << "; it's estimated as " << xg1<< ", " << yg1; 
+	if (_IMM_DEBUG) cout << "; The ratio is " << exg1/xg1 <<", " << eyg1/yg1 << endl; 
+	
+	
+	
+	if (_IMM_DEBUG) cout << "croppedImage = (seen-predicted)^2" << endl; 
+	cvMul(croppedImage, croppedImage, croppedImage); 
+	
+	
+	if (_IMM_DEBUG) cout << "computed deriv second 1/2 term" << endl; 
+	cvMul(croppedImage, lambdaSigmaGradSigmaInvSquaredX, diffim); 
+	double xg2 = 0.5*cvGetReal2D(diffim, cy2, cx2); 
+	retval.xgrad = retval.xgrad+0.5*cvSum(diffim).val[0]; 
+	cvMul(croppedImage, lambdaSigmaGradSigmaInvSquaredY, diffim); 
+	double yg2 = 0.5*cvGetReal2D(diffim, cy2, cx2);
+	retval.ygrad = retval.ygrad+0.5*cvSum(diffim).val[0]; 
+	
+	if (_IMM_DEBUG) cout << "xg2 is " << xg2 << "; yg2 is " << yg2 << endl; 
+	
+	
+	double exg2 = .5*(diff*diff)/sig2/sig2*(sig2x2-sig2x1)/2; 
+	double eyg2 = .5*(diff*diff)/sig2/sig2*(sig2y2-sig2y1)/2; 
+	
+	if (_IMM_DEBUG) cout << "sig2 is " << sig2 <<  endl; 
+	if (_IMM_DEBUG) cout << "sig2 grad is " << (sig2x2-sig2x1)/2.0 << ", " << (sig2y2-sig2y1)/2.0; 
+	if (_IMM_DEBUG) cout << "; it's estimated as " << cvGetReal2D(lambdaSigmaGradX, cy, cx)/2 << ", " << cvGetReal2D(lambdaSigmaGradY, cy, cx)/2 ; 
+	if (_IMM_DEBUG) cout << "; The ratio is " << (sig2x2-sig2x1)/2.0/(cvGetReal2D(lambdaSigmaGradX, cy, cx)/2 ) <<", " << (sig2y2-sig2y1)/2.0/(cvGetReal2D(lambdaSigmaGradY, cy, cx)/2 ) << endl; 
+	
+	if (_IMM_DEBUG) cout << "The variance grad corrections is " << exg2 << ", " <<eyg2; 
+	if (_IMM_DEBUG) cout << "; it's estimated as " << xg2<< ", " << yg2; 
+	if (_IMM_DEBUG) cout << "; The ratio is " << exg2/xg2 <<", " << eyg2/yg2 << endl; 
+	
+	if (_IMM_DEBUG) cout << "croppedVariance = sigma+q" << endl; 
+	cvAddS(croppedVariance, cvRealScalar(lambdaQ), croppedVariance); 
+	
+	if (_IMM_DEBUG) cout << "croppedImage = (seen-predicted)^2/(sigma^2+q^2)" << endl; 
+	cvDiv(croppedImage, croppedVariance, croppedImage); 
+	
+	
+	double exg12 = ((-.5*diffx2*diffx2/sig2x2) - (-.5*diffx1*diffx1/sig2x1))/2.0;  
+	double eyg12 = ((-.5*diffy2*diffy2/sig2y2) - (-.5*diffy1*diffy1/sig2y1))/2.0;  
+	
+	
+	
+	
+	if (_IMM_DEBUG) cout << "croppedVariance = log(sigma^2+q^2)" << endl; 
+	cvLog(croppedVariance, croppedVariance); 
+	double exg3 = -.5*((cvGetReal2D(croppedVariance, cy2, cx2+1)-cvGetReal2D(croppedVariance, cy2, cx2-1))/2.0); 
+	double eyg3 = -.5*((cvGetReal2D(croppedVariance, cy2+1, cx2)-cvGetReal2D(croppedVariance, cy2-1, cx2))/2.0); 
+	
+	CvScalar a = cvSum(croppedImage); 
+	CvScalar b = cvSum(croppedVariance); 
+	
+	//Note: This can be done with an integral image!
+	retval.xgrad = retval.xgrad-0.5*cvSum(lambdaSigmaGradSigmaInvX).val[0]; 
+	retval.ygrad = retval.ygrad-0.5*cvSum(lambdaSigmaGradSigmaInvY).val[0]; 
+	
+	if (_IMM_DEBUG) cout << "computed deriv third term" << endl; 
+	if (_IMM_DEBUG) cout << "lSGSIX has size " << lambdaSigmaGradSigmaInvX->width << "x" << lambdaSigmaGradSigmaInvX->height << "; cy is " << cy << "; cx is " << cx << endl; 
+	if (_IMM_DEBUG) cout << "lSGSIY has size " << lambdaSigmaGradSigmaInvY->width << "x" << lambdaSigmaGradSigmaInvY->height << "; cy is " << cy << "; cx is " << cx << endl;
+	cvResetImageROI(lambdaSigmaGradSigmaInvX); 
+	cvResetImageROI(lambdaSigmaGradSigmaInvY); 
+	double xg3 = -cvGetReal2D(lambdaSigmaGradSigmaInvX, cy, cx)*0.5; 
+	if (_IMM_DEBUG) cout << "didn't crash 1" << endl;
+	double yg3 = -cvGetReal2D(lambdaSigmaGradSigmaInvY, cy, cx)*.5; 
+	if (_IMM_DEBUG) cout << "didn't crash 2" << endl;
+	
+	
+	if (_IMM_DEBUG) cout << "getting point est of deriv third term" << endl; 
+	
+	if (_IMM_DEBUG) cout << "croppedVariance has size " << croppedVariance->width << "x" << croppedVariance->height << "; cy2 is " << cy2 << "; cx2 is " << cx2 << endl; 
+	if (_IMM_DEBUG) cout << "croppedVariance has size " << croppedVariance->width << "x" << croppedVariance->height << "; cy2 is " << cy2 << "; cx2 is " << cx2 << endl;
+	
+	//double exg3 = (cvGetReal2D(croppedVariance, cy2, cx2+1)-cvGetReal2D(croppedVariance, cy2, cx2-1))/2.0; 
+	//double eyg3 = (cvGetReal2D(croppedVariance, cy2+1, cx2)-cvGetReal2D(croppedVariance, cy2-1, cx2))/2.0;
+	
+	
+	
+	if (_IMM_DEBUG) cout << "Checking -.5[seen-lambda]^2/(Sigma^2+q^2)^2 " << exg12  << "<-->" << xg1+xg2 << " (" << exg12/(xg1+xg2) << "); ";   
+	if (_IMM_DEBUG) cout << "-.5[seen-lambda]^2/(Sigma^2+q^2)^2 " << eyg12  << "<-->" << yg1+yg2 << " (" << eyg12/(yg1+yg2) << "); "<< endl; 
+	
+	if (_IMM_DEBUG) cout << "Checking -.5[LambdaSigma X-Grad]/(Sigma^2+q^2) " << exg3  << "<-->" <<xg3 << " (" << exg3/(xg3) << "); "; 
+	if (_IMM_DEBUG) cout << "-.5[LambdaSigma Y-Grad]/(Sigma^2+q^2) " << eyg3  << "<-->" << yg3 << " (" << eyg3/(yg3) << "); "<< endl; 
+	
+	
+	cvReleaseImage(&diffim); 
+	cvResetImageROI(lambdaGradSigmaInvX); 
+	cvResetImageROI(lambdaGradSigmaInvY); 
+	cvResetImageROI(lambdaSigmaGradSigmaInvX); 
+	cvResetImageROI(lambdaSigmaGradSigmaInvY); 
+	cvResetImageROI(lambdaSigmaGradSigmaInvSquaredX); 
+	cvResetImageROI(lambdaSigmaGradSigmaInvSquaredY); 
+	
+	retval.val = -.5*a.val[0]-.5*b.val[0]; 
+	
+	return retval; 
+}
+
+double InternalMotionModel::obsLogLikelihood(CvMat* tau, IplImage* seenImage, CvMat* action) {
+	//return motionModelLogLikelihood(tau, action).val + sensorModelLogLikelihood(tau, seenImage).val; 
+	return getObsLogLikelihood(tau, seenImage, action).val; 
+}
+
+likelihood InternalMotionModel::getObsLogLikelihood(CvMat* tau, IplImage* seenImage, CvMat* action) {
+	likelihood retval; 
+	likelihood motion = motionModelLogLikelihood(tau, action); 
+	likelihood sensor = sensorModelLogLikelihood(tau, seenImage); 
+	retval.xgrad = motion.xgrad + sensor.xgrad; 
+	retval.ygrad = motion.ygrad + sensor.ygrad; 
+	retval.val = motion.val + sensor.val; 
+	return retval; 
+}
+
+
+void InternalMotionModel::updateSensorModel(IplImage* seenImage, CvMat* tau) {	
+	if (_IMM_DEBUG) cout << "Updating Sensor Model." << endl; 
+	int tx = cvGetReal2D(tau, 0, 0); 
+	int ty = cvGetReal2D(tau, 1, 0); 
+	int bigw = lambda->width; 
+	int bigh = lambda->height; 
+	
+	CvRect roi = cvRect(bigw/2-obsSize.width/2+tx, bigh/2-obsSize.height/2+ty, 
+						obsSize.width, obsSize.height); 
+	
+	CvRect biggerROI = roi; 
+	biggerROI.x = biggerROI.x-2;
+	biggerROI.y = biggerROI.y-2;
+	biggerROI.width = biggerROI.width+4; 
+	biggerROI.height = biggerROI.height+4; 
+	CvRect roiX1 = biggerROI; 
+	roiX1.x = roiX1.x-1; 
+	CvRect roiX2 = biggerROI; 
+	roiX2.x = roiX2.x+1; 
+	CvRect roiY1 = biggerROI; 
+	roiY1.y = roiY1.y-1; 
+	CvRect roiY2 = biggerROI; 
+	roiY2.y = roiY2.y+1; 
+	
+	if (_IMM_DEBUG) cout << "Big Image has size " << bigw << ", " << bigh << endl; 
+	if (_IMM_DEBUG) cout << "Cropped image has size " << croppedImage->width << ", " << croppedImage->height << endl; 
+	
+	if (_IMM_DEBUG) cout << "Image has size " << seenImage->width << ", " << seenImage->height << endl; 
+	if (_IMM_DEBUG) cout << "Transform has roi " << roi.x << ", " << roi.y 
+		<< ", " << roi.width << ", " << roi.height << endl; 
+	
+	if (_IMM_DEBUG) cout << "Updating variance for all pixels." << endl; 
+	
+	cvResetImageROI(lambdaSigma); 
+	cvAddS(lambdaSigma, cvRealScalar(sigmaD), lambdaSigma); 
+	sigmaDAccumulated = sigmaDAccumulated+sigmaD; 
+	
+	
+	if (_IMM_DEBUG) cout << "sigmaDAccumulateds are " << sigmaDAccumulated << "<--->" << cvGetReal2D(lambdaSigma, 0, 0) << endl; 
+	
+	getLambdaForTransform(tau, croppedImage, croppedVariance); 
+	
+	if (_IMM_DEBUG) cout << "Getting 1/(sigma+q)" << endl; 
+	
+	// croppedVariance = 1/(sigma+q)
+	cvAddS(croppedVariance, cvRealScalar(lambdaQ), croppedVariance); 
+	cvDiv(NULL, croppedVariance, croppedVariance); 
+	
+	if (_IMM_DEBUG) cout << "Getting sigma/(sigma+q)" << endl; 
+	// croppedVariance = sigma/(sigma+q)
+	cvSetImageROI(lambdaSigma, roi); 
+	cvMul(lambdaSigma, croppedVariance, croppedVariance); 
+	
+	if (_IMM_DEBUG) cout << "Getting sigma/(sigma+q)*(lambda-seenImage)" << endl; 
+	//croppedImage = sigma/(sigma+q)(lambda-seenImage)
+	cvSetImageROI(lambda, roi); 
+	cvSub(seenImage, lambda, croppedImage);
+	cvMul(croppedImage, croppedVariance, croppedImage); 
+	
+	if (_IMM_DEBUG) cout << "Getting lambda+sigma/(sigma+q)(lambda-seenImage)" << endl; 
+	//lambda = lambda+sigma/(sigma+q)(lambda-seenImage)
+	cvAdd(croppedImage, lambda, lambda); 
+	
+	if (_IMM_DEBUG) cout << "Getting (1-sigma/(sigma+q))" << endl; 
+	//croppedVariance = (1-sigma/(sigma+q))
+	cvSubRS(croppedVariance, cvRealScalar(1), croppedVariance); 
+	
+	if (_IMM_DEBUG) cout << "Getting (1-sigma/(sigma+q))*sigma" << endl; 
+	//sigma = (1-sigma/(sigma+q))*sigma
+	cvMul(croppedVariance, lambdaSigma, lambdaSigma); 
+	
+	//cvResetImageROI(lambda); 
+	//cvResetImageROI(lambdaSigma); 	
+	
+	if (_IMM_DEBUG) cout << "Getting x-gradient of lambda image." << endl; 
+	cvSetImageROI(lambdaGradX, biggerROI); 
+	cvSetImageROI(lambda, roiX2); 
+	cvCopy(lambda, lambdaGradX); 
+	cvSetImageROI(lambda, roiX1); 
+	cvSub(lambdaGradX, lambda, lambdaGradX); 
+	//cvResetImageROI(lambda); 
+	//cvResetImageROI(lambdaGradX); 
+	
+	
+	if (_IMM_DEBUG) cout << "Getting y-gradient of lambda image." << endl; 
+	cvSetImageROI(lambdaGradY, biggerROI); 
+	cvSetImageROI(lambda, roiY2); 
+	cvCopy(lambda, lambdaGradY); 
+	cvSetImageROI(lambda, roiY1); 
+	cvSub(lambdaGradY, lambda, lambdaGradY); 
+	//cvResetImageROI(lambda); 
+	//cvResetImageROI(lambdaGradY); 
+	
+	
+	if (_IMM_DEBUG) cout << "Getting x-gradient of variance image." << endl; 
+	cvSetImageROI(lambdaSigmaGradX, biggerROI); 
+	cvSetImageROI(lambdaSigma, roiX2); 
+	cvCopy(lambdaSigma, lambdaSigmaGradX); 
+	cvSetImageROI(lambdaSigma, roiX1); 
+	cvSub(lambdaSigmaGradX, lambdaSigma, lambdaSigmaGradX); 
+	//cvResetImageROI(lambdaSigma); 
+	//cvResetImageROI(lambdaSigmaGradX); 
+	
+	if (_IMM_DEBUG) cout << "Getting y-gradient of variance image." << endl; 
+	cvSetImageROI(lambdaSigmaGradY, biggerROI); 
+	cvSetImageROI(lambdaSigma, roiY2); 
+	cvCopy(lambdaSigma, lambdaSigmaGradY); 
+	cvSetImageROI(lambdaSigma, roiY1); 
+	cvSub(lambdaSigmaGradY, lambdaSigma, lambdaSigmaGradY); 
+	//cvResetImageROI(lambdaSigma); 
+	//cvResetImageROI(lambdaSigmaGradY); 
+	
+	
+	cvResetImageROI(lambdaSigma); 
+	cvResetImageROI(lambdaSigmaGradSigmaInvX); 
+	cvResetImageROI(lambdaSigmaGradSigmaInvY); 
+	cvResetImageROI(lambdaSigmaGradSigmaInvSquaredX); 
+	cvResetImageROI(lambdaSigmaGradSigmaInvSquaredY); 
+	cvResetImageROI(lambdaGradSigmaInvX); 
+	cvResetImageROI(lambdaGradSigmaInvY); 
+	cvResetImageROI(lambdaGradX); 
+	cvResetImageROI(lambdaGradY); 
+	cvResetImageROI(lambdaSigmaGradX); 
+	cvResetImageROI(lambdaSigmaGradY); 
+	//cvSetImageROI(lambdaSigma, biggerROI); 
+	//cvSetImageROI(lambdaSigmaGradSigmaInvX, biggerROI); 
+	//cvSetImageROI(lambdaSigmaGradSigmaInvY, biggerROI);
+	//cvSetImageROI(lambdaSigmaGradSigmaInvSquaredX, biggerROI); 
+	//cvSetImageROI(lambdaSigmaGradSigmaInvSquaredY, biggerROI); 
+	//cvSetImageROI(lambdaGradSigmaInvX, biggerROI);  
+	//cvSetImageROI(lambdaGradSigmaInvY, biggerROI); 
+	//cvSetImageROI(lambdaGradX, biggerROI); 
+	//cvSetImageROI(lambdaGradY, biggerROI); 
+	//cvSetImageROI(lambdaSigmaGradX, biggerROI); 
+	//cvSetImageROI(lambdaSigmaGradY, biggerROI); 
+	
+	if (_IMM_DEBUG) cout << "Getting inverse of variance image for denominators." << endl; 
+	cvAddS(lambdaSigma, cvRealScalar(lambdaQ), lambdaSigmaGradSigmaInvX); 
+	
+	//lambdaSigmaGradSigmaInvX = 1/2 * 1/(sigma^2+q^2)
+	cvDiv(NULL, lambdaSigmaGradSigmaInvX, lambdaSigmaGradSigmaInvX, 0.5); //The gradient should be scaled by .5 but this is easier
+	
+	
+	//lambdaSigmaGradSigmaInvX = 1/2 * 1/(sigma^2+q^2)^2
+	cvMul(lambdaSigmaGradSigmaInvX, lambdaSigmaGradSigmaInvX, lambdaSigmaGradSigmaInvSquaredX, 2.0);//Have to compensate in the square for dividing by 2 earlier
+	
+	//if (_IMM_DEBUG) cout << "Assigning denominators." << endl; 
+	//cvCopy(lambdaSigmaGradSigmaInvX, lambdaSigmaGradSigmaInvY);
+	//cvCopy(lambdaSigmaGradSigmaInvX, lambdaGradSigmaInvX);
+	//cvCopy(lambdaSigmaGradSigmaInvX, lambdaGradSigmaInvY);
+	//cvMul(lambdaSigmaGradSigmaInvX, lambdaSigmaGradSigmaInvX, lambdaSigmaGradSigmaInvSquaredY, 2.0);
+	
+	
+	if (_IMM_DEBUG) cout << "Setting lambda_grad / sigma." << endl; 
+	cvMul(lambdaGradX, lambdaSigmaGradSigmaInvX, lambdaGradSigmaInvX); 
+	cvMul(lambdaGradY, lambdaSigmaGradSigmaInvX, lambdaGradSigmaInvY);
+	
+	if (_IMM_DEBUG) cout << "Setting lambdaSigma_grad / (sigma^2+q^2)." << endl; 
+	cvMul(lambdaSigmaGradY, lambdaSigmaGradSigmaInvX, lambdaSigmaGradSigmaInvY);
+	cvMul(lambdaSigmaGradX, lambdaSigmaGradSigmaInvX, lambdaSigmaGradSigmaInvX); //finally overwrite lambdaSigmaGradSigmaInvX
+	
+	if (_IMM_DEBUG) cout << "Setting lambdaSigma_grad / (sigma^2+q^2)." << endl; 
+	cvMul(lambdaSigmaGradY, lambdaSigmaGradSigmaInvSquaredX, lambdaSigmaGradSigmaInvSquaredY);
+	cvMul(lambdaSigmaGradX, lambdaSigmaGradSigmaInvSquaredX, lambdaSigmaGradSigmaInvSquaredX);//finally overwrite lambdaSigmaGradSigmaInvSquaredX
+	
+	cvResetImageROI(lambda); 
+	cvResetImageROI(lambdaSigma); 
+	cvResetImageROI(lambdaGradX); 
+	cvResetImageROI(lambdaGradY); 
+	cvResetImageROI(lambdaSigmaGradX); 
+	cvResetImageROI(lambdaSigmaGradY); 
+	cvResetImageROI(lambdaGradSigmaInvX); 
+	cvResetImageROI(lambdaGradSigmaInvY); 
+	cvResetImageROI(lambdaSigmaGradSigmaInvX); 
+	cvResetImageROI(lambdaSigmaGradSigmaInvY); 
+	cvResetImageROI(lambdaSigmaGradSigmaInvSquaredX); 
+	cvResetImageROI(lambdaSigmaGradSigmaInvSquaredY); 
+	
+}
+
+void InternalMotionModel::updateMotionModel(CvMat* action, CvMat* tau) {
+	
+	getMotionFeatures(action, features); 
+	getCMatFromFeatures(features, cMat); 
+	
+	//matNx1a = c*alpha
+	cvGEMM(cMat, alpha, 1, NULL, 1, matNx1a, 0); 
+	
+	//matNx1a = tau-c*alpha
+	cvSub(tau, matNx1a, matNx1a); 
+	
+	cvAdd(alphaSigma, alphaR, alphaSigma); 
+	
+	//matMNxNa = S*Ct
+	cvGEMM(alphaSigma, cMat, 1, NULL, 1, matMNxNa, CV_GEMM_B_T); 
+	
+	//matNxNa = (C*S*Ct+Q)^-1
+	cvGEMM(cMat, matMNxNa, 1, alphaQ, 1, matNxNa, 0); 
+	cvInvert(matNxNa, matNxNa);	
+	
+	//matMNxNa = S*Ct * (C*S*Ct+Q)^-1 = K
+	cvGEMM(matMNxNa, matNxNa, 1, NULL, 1, matMNxNa, 0); 
+	
+	//matMNx1a = K * (tau-c*alpha)
+	cvGEMM(matMNxNa, matNx1a, 1, NULL, 1, matMNx1a, 0); 
+	
+	//alpha = alpha+ K * (tau-c*alpha)
+	cvAdd(alpha, matMNx1a, alpha); 
+	
+	//matMNxMNa = KC	
+	cvGEMM(matMNxNa, cMat, 1, NULL, 1, matMNxMNa, 0); 
+	
+	//matMNxMNa = I - KC
+	cvSetIdentity(matMNxMNb); 
+	cvSub(matMNxMNb, matMNxMNa, matMNxMNa); 
+	
+	//S = (I - KC) * S
+	cvGEMM(matMNxMNa, alphaSigma, 1, NULL, 1, alphaSigma, 0); 	
+	
+}
+
+void InternalMotionModel::updateModel(IplImage* seenImage, CvMat* action, CvMat* tau){
+	if (useRetinalCoordinates) {
+		vector<CvRect> rois = getRectanglePatchIntersection(cvSize(lambda->width,lambda->height),
+															cvSize(lambda->width,lambda->height), 
+															cvSize(-1,-1),
+															cvGetReal2D(tau,0,0),
+															cvGetReal2D(tau,1,0)); 
+		
+		if (_IMM_DEBUG) cout << endl << "Updating with tau=[" << cvGetReal2D(tau,0,0) << " " << cvGetReal2D(tau,1,0) 
+			<< "] using (" <<rois[0].x<<" " << rois[0].y<<" " << rois[0].width<<" "<< rois[0].height <<") (" 
+			<<rois[1].x<<" " <<rois[1].y<<" " <<rois[1].width<<" "<<rois[1].height<<") "<< endl;
+		
+		
+		recenterMap(lambda, muLambdaPrior, rois[0], rois[1]); 
+		recenterMap(lambdaSigma, sigmaDAccumulated, rois[0], rois[1]); 
+		recenterMap(lambdaGradX, 0, rois[0], rois[1]);
+		recenterMap(lambdaGradY, 0, rois[0], rois[1]);
+		recenterMap(lambdaSigmaGradX, 0, rois[0], rois[1]);
+		recenterMap(lambdaSigmaGradY, 0, rois[0], rois[1]);
+		recenterMap(lambdaSigmaGradSigmaInvX, 0, rois[0], rois[1]);
+		recenterMap(lambdaSigmaGradSigmaInvY, 0, rois[0], rois[1]);
+		recenterMap(lambdaSigmaGradSigmaInvSquaredX, 0, rois[0], rois[1]);
+		recenterMap(lambdaSigmaGradSigmaInvSquaredY, 0, rois[0], rois[1]);
+		recenterMap(lambdaGradSigmaInvX, 0, rois[0], rois[1]);
+		recenterMap(lambdaGradSigmaInvY, 0, rois[0], rois[1]);
+		
+		
+		/*
+		 IplImage* clone = cvCloneImage(lambda); 
+		 cvSet(lambda,cvRealScalar(.5)); 
+		 cvSetImageROI(lambda,rois[0]); 
+		 cvSetImageROI(clone,rois[1]); 
+		 cvCopy(clone,lambda); 
+		 cvResetImageROI(lambda); 
+		 cvReleaseImage(&clone); 
+		 
+		 clone = cvCloneImage(lambdaSigma); 
+		 cvSet(lambdaSigma, cvRealScalar(sigmaD)); 
+		 cvSetImageROI(lambdaSigma,rois[0]); 
+		 cvSetImageROI(clone,rois[1]); 
+		 cvCopy(clone,lambdaSigma); 
+		 cvResetImageROI(lambdaSigma); 		
+		 cvReleaseImage(&clone); 
+		 */
+		
+		
+		
+		cvSetZero(matNx1a); 
+		updateSensorModel(seenImage, matNx1a);
+	} else {
+		if (_IMM_DEBUG) cout << "Updating sensor model." << endl; 
+		updateSensorModel(seenImage, tau);
+	}
+	if (_IMM_DEBUG) cout << "Updating action model." << endl; 
+	updateMotionModel(action, tau); 
+	
+}
+
+void InternalMotionModel::recenterMap(IplImage* image, double defaultVal, CvRect roi0, CvRect roi1) {
+	
+	IplImage* clone = cvCloneImage(image); 
+	cvSet(image,cvRealScalar(defaultVal)); 
+	cvSetImageROI(image,roi0); 
+	cvSetImageROI(clone,roi1); 
+	cvCopy(clone,image); 
+	cvResetImageROI(image); 
+	cvReleaseImage(&clone); 
+}
+
+void InternalMotionModel::printMat(CvMat* mat) {
+	cout << "[" ; 
+	for (int i = 0; i < mat->rows; i++) {
+		for (int j = 0; j < mat->cols; j++) {
+			cout << "  " << cvGetReal2D(mat, i, j);  
+		}
+		if (i < mat->rows-1) {
+			cout << endl << "  "; 
+		} else {
+			cout << "  ]" << endl; 
+		}
+	}
+}
+
+double InternalMotionModel::randomNormal() {
+	static CvRNG state = cvRNG(0xffffffff); 
+	CvMat* values = cvCreateMat(1, 1, CV_64FC1);
+	cvRandArr(&state, values, CV_RAND_NORMAL, cvRealScalar(0), // average intensity
+			  cvRealScalar(1) );
+	double retval = cvGetReal2D(values,0,0); 	
+	cvReleaseMat(&values);
+	return retval; 
+}
+
+void InternalMotionModel::getTauMeanForImageAndAction(IplImage* seenImage, CvMat* action, CvMat* tauMat) {
+	getMotionFeatures(action, features); 
+	getCMatFromFeatures(features, cMat); 
+	cvGEMM(cMat, alpha, 1, NULL, 1, tauMat, 0); 
+}
+
+void InternalMotionModel::checkGrad(CvMat* tau, IplImage* seenImage, CvMat* action) {
+	int tau0 = cvGetReal2D(tau, 0, 0); 
+	int tau1 = cvGetReal2D(tau, 1, 0); 
+	
+	
+	cvSetReal2D(tau, 0, 0, tau0-1); 
+	likelihood x1 = sensorModelLogLikelihood(tau, seenImage); 
+	cvSetReal2D(tau, 0, 0, tau0+1); 
+	likelihood x2 = sensorModelLogLikelihood(tau, seenImage); 
+	
+	cvSetReal2D(tau, 0, 0, tau0);
+	
+	cvSetReal2D(tau, 1, 0, tau1-1); 
+	likelihood y1 = sensorModelLogLikelihood(tau, seenImage);  
+	cvSetReal2D(tau, 1, 0, tau1+1); 
+	likelihood y2 = sensorModelLogLikelihood(tau, seenImage); 
+	
+	
+	cvSetReal2D(tau, 0, 0, tau0);	
+	cvSetReal2D(tau, 1, 0, tau1);
+	likelihood center = sensorModelLogLikelihood(tau, seenImage); 
+	
+	cout << "At Offset " << tau0 << ", " << tau1 << " sensor LL val: " << center.val 
+	<< "; xgrad: " << center.xgrad << "; ygrad: " << center.ygrad 
+	<< "; fin-diff-xgrad " << (x2.val-x1.val)/2.0 << "; fin-diff-ygrad: "
+	<< (y2.val-y1.val)/2.0 << endl; 
+	
+	
+	cvSetReal2D(tau, 0, 0, tau0-1); 
+	x1 = motionModelLogLikelihood(tau, action); 
+	cvSetReal2D(tau, 0, 0, tau0+1); 
+	x2 = motionModelLogLikelihood(tau, action);
+	
+	cvSetReal2D(tau, 0, 0, tau0);
+	
+	cvSetReal2D(tau, 1, 0, tau1-1); 
+	y1 = motionModelLogLikelihood(tau, action); 
+	cvSetReal2D(tau, 1, 0, tau1+1); 
+	y2 = motionModelLogLikelihood(tau, action);
+	
+	
+	cvSetReal2D(tau, 0, 0, tau0);	
+	cvSetReal2D(tau, 1, 0, tau1);
+	center = motionModelLogLikelihood(tau, action); 
+	
+	cout << "At Offset " << tau0 << ", " << tau1 << " motion LL val: " << center.val 
+	<< "; xgrad: " << center.xgrad << "; ygrad: " << center.ygrad 
+	<< "; fin-diff-xgrad " << (x2.val-x1.val)/2.0 << "; fin-diff-ygrad: "
+	<< (y2.val-y1.val)/2.0 << endl; 
+	
+	double mn, mx; 
+	CvPoint mnp, mxp; 
+	cvMinMaxLoc(lambdaSigmaGradX, &mn, &mx, &mnp, &mxp);
+	
+	int x = mxp.x;//lambda->width / 2 + tau0; 
+	int y = mxp.y;//lambda->height / 2 + tau1; 
+	
+	double xg1 = (cvGetReal2D(lambda, y, x+1) - cvGetReal2D(lambda, y, x-1))*1.0/2; 
+	double yg1 = (cvGetReal2D(lambda, y+1, x) - cvGetReal2D(lambda, y-1, x))*1.0/2; 
+	double xg2 = (cvGetReal2D(lambdaSigma, y, x+1) - cvGetReal2D(lambdaSigma, y, x-1))*1.0/2; 
+	double yg2 = (cvGetReal2D(lambdaSigma, y+1, x) - cvGetReal2D(lambdaSigma, y-1, x))*1.0/2; 
+	double v1 = cvGetReal2D(lambda, y, x); 
+	double v2 = cvGetReal2D(lambdaSigma, y, x); 
+	double sigq = v2 + lambdaQ; 
+	
+	cout << "At Location " << x << ", " << y << " lambda is " << v1 << " and sigma " << v2 << endl; 
+	cout << "Lambda X-Grad " << xg1 << "<-->" << cvGetReal2D(lambdaGradX, y, x)/2.0 << "; "; 
+	cout << "Lambda Y-Grad " << yg1 << "<-->" << cvGetReal2D(lambdaGradY, y, x)/2.0 << "; "; 
+	cout << "LambdaSigma X-Grad " << xg2 << "<-->" << cvGetReal2D(lambdaSigmaGradX, y, x)/2.0 << "; "; 
+	cout << "LambdaSigma Y-Grad " << yg2 << "<-->" << cvGetReal2D(lambdaSigmaGradY, y, x)/2.0 << endl; 
+	
+	cout << "[Lambda X-Grad]/(Sigma^2+q^2) " << xg1/sigq << "<-->" << cvGetReal2D(lambdaGradSigmaInvX, y, x) << "; ";   
+	cout << "[Lambda Y-Grad]/(Sigma^2+q^2) " << yg1/sigq << "<-->" << cvGetReal2D(lambdaGradSigmaInvY, y, x) << endl; 
+	
+	cout << "[LambdaSigma X-Grad]/(Sigma^2+q^2)^2 " << xg2/sigq/sigq  << "<-->" << cvGetReal2D(lambdaSigmaGradSigmaInvSquaredX, y, x) << "; ";   
+	cout << "[LambdaSigma Y-Grad]/(Sigma^2+q^2)^2 " << yg2/sigq/sigq  << "<-->" << cvGetReal2D(lambdaSigmaGradSigmaInvSquaredY, y, x) << endl; 
+	
+	cout << "[LambdaSigma X-Grad]/(Sigma^2+q^2) " << xg2/sigq  << "<-->" << cvGetReal2D(lambdaSigmaGradSigmaInvX, y, x) << "; ";   
+	cout << "[LambdaSigma Y-Grad]/(Sigma^2+q^2) " << yg2/sigq  << "<-->" << cvGetReal2D(lambdaSigmaGradSigmaInvY, y, x) << endl; 
+	
+	/*
+	cvSetReal2D(tau, 0, 0, tau0-1); 
+	x1 = getObsLogLikelihood(tau, seenImage, action); 
+	cvSetReal2D(tau, 0, 0, tau0+1); 
+	x2 = getObsLogLikelihood(tau, seenImage, action); 
+	
+	cvSetReal2D(tau, 0, 0, tau0);
+	
+	cvSetReal2D(tau, 1, 0, tau1-1); 
+	y1 = getObsLogLikelihood(tau, seenImage, action); 
+	cvSetReal2D(tau, 1, 0, tau1+1); 
+	y2 = getObsLogLikelihood(tau, seenImage, action); 
+	
+	
+	cvSetReal2D(tau, 0, 0, tau0);	
+	cvSetReal2D(tau, 1, 0, tau1);
+	center = getObsLogLikelihood(tau, seenImage, action); 
+	
+	cout << "At Offset " << tau0 << ", " << tau1 << " val: " << center.val 
+	<< "; xgrad: " << center.xgrad << "; ygrad: " << center.ygrad 
+	<< "; fin-diff-xgrad " << (x2.val-x1.val)/2.0 << "; fin-diff-ygrad: "
+	<< (y2.val-y1.val)/2.0 << endl; 
+	*/
+	
+}
+
+
+void InternalMotionModel::findMaxLikelihoodTransform(IplImage* seenImage, CvMat* action, CvMat* tau) {
+	//getMotionFeatures(action, features); 
+	//getCMatFromFeatures(features, cMat); 
+	//cvGEMM(cMat, alpha, 1, NULL, 1, matNx1a, 0); 
+	
+	getTauMeanForImageAndAction(seenImage, action, matNx1a); 
+	
+	int tau0 = cvGetReal2D(matNx1a, 0, 0); 
+	int tau1 = cvGetReal2D(matNx1a, 1, 0); 
+	
+	
+	/*
+	 double bestm = -1E10; 
+	 double besttau0m; 
+	 double besttau1m; 
+	 
+	 for (int i = -100; i <=100; i++) {
+	 for (int j = -100; j <= 100; j++) {
+	 cvSetReal2D(tau, 0, 0, tau0+j); 
+	 cvSetReal2D(tau, 1, 0, tau1+i);
+	 double ll = obsLogLikelihood(matNx1b, seenImage, action); 
+	 }
+	 }*/
+	
+	
+	double best = -1E30; 
+	double besttau0=0; 
+	double besttau1=0; 
+	
+	double searchRad = 1.0/3.0; 
+	
+	for (int i = -obsSize.height*searchRad; i <= obsSize.height*searchRad; i=i+8) {
+		for (int j = -obsSize.width*searchRad; j <= obsSize.width*searchRad; j=j+8) {
+			cvSetReal2D(tau, 0, 0, tau0+j); 
+			cvSetReal2D(tau, 1, 0, tau1+i);
+			
+			if (_IMM_DEBUG) cout << "Getting LL at " << tau0+j << ", " << tau1+i << endl; 
+			double ll = obsLogLikelihood(tau, seenImage, action); 
+			if (ll > best) {
+				best = ll; 
+				if (_IMM_DEBUG) 
+					cout << "Found better one: " << ll << endl; 
+				if (_IMM_DEBUG) 
+					cout << "At " << tau0+j << ", " << tau1+i << endl;
+				if (_IMM_DEBUG) checkGrad(tau, seenImage, action); 
+				besttau0 = tau0+j ; 
+				besttau1 = tau1+i ; 
+			}
+		}
+	}
+	
+	for (int i = besttau1-16; i <= besttau1+16; i++) {
+		for (int j = besttau0-16; j <= besttau0+16; j++) {
+			cvSetReal2D(tau, 0, 0, j); 
+			cvSetReal2D(tau, 1, 0, i);
+			
+			if (_IMM_DEBUG) cout << "Getting LL at " << tau0+j << ", " << tau1+i << endl; 
+			double ll = obsLogLikelihood(tau, seenImage, action); 
+			if (ll > best) {
+				best = ll; 
+				if (_IMM_DEBUG) 
+					cout << "Found better one: " << ll << endl; 
+				if (_IMM_DEBUG) 
+					cout << "At " << j << ", " << i << endl;
+				besttau0 = j ; 
+				besttau1 = i ; 
+			}
+		}
+	}
+	
+	
+	
+	cvSetReal2D(tau,0,0, besttau0); 
+	cvSetReal2D(tau,1,0,besttau1); 
+}
+
+void InternalMotionModel::updateModelMAP(IplImage* seenImage, CvMat* action) {
+	findMaxLikelihoodTransform(seenImage, action, tau);
+	updateModel(seenImage, action, tau); 
+}
+
+//Computes intersection regions of two rectangles in their own coordinate systems.
+//r1 and r2 are rectangles of size r1size and r2size. PatchSize is a patch, which 
+//may be smaller than either size of a subrectangle, centered in r1 and r2. If
+//patchSize is (-1,-1), then the smaller of r1size/r2size is used. xoff is the
+//the x position of r2 relative to r1. yoff is the y position of r2 relative to
+// r1. Afterward, retval[0] is the region of interest (roi) in r1 that intersects
+// the patch in r2, and retval[1] is the roi in r2 that intersects the patch in
+// r1. 
+vector<CvRect> InternalMotionModel::getRectanglePatchIntersection(CvSize r1size, CvSize r2size, CvSize patchSize, int xoff, int yoff) {	
+	
+	if (patchSize.width < 0 || patchSize.width > r1size.width ||
+		patchSize.height < 0 || patchSize.height > r1size.height) 
+		patchSize = r1size; 
+	if (patchSize.width > r2size.width || patchSize.height > r2size.height)
+		patchSize = r2size; 
+	
+	if (_IMM_DEBUG) cout << "xoff: " << xoff << "; yoff: " << yoff << endl; 
+	
+	double tlx1, tlx2, tly1, tly2, brx1, brx2, bry1,bry2; 
+	tlx1 = r1size.width *1.0 / 2.0 - patchSize.width*1.0/2.0;
+	tly1 = r1size.height *1.0 / 2.0 - patchSize.height*1.0/2.0;
+	brx1 = r1size.width *1.0 / 2.0 + patchSize.width*1.0/2.0 -1;
+	bry1 = r1size.height *1.0 / 2.0 + patchSize.height*1.0/2.0-1;
+	
+	tlx2 = r2size.width *1.0 / 2.0 - patchSize.width*1.0/2.0 +xoff;
+	tly2 = r2size.height *1.0 / 2.0 - patchSize.height*1.0/2.0+yoff;
+	brx2 = r2size.width *1.0 / 2.0 + patchSize.width*1.0/2.0+xoff-1;
+	bry2 = r2size.height *1.0 / 2.0 + patchSize.height*1.0/2.0+yoff-1;
+	
+	if (_IMM_DEBUG) cout << "BB1: (" << tlx1 << ", " << tly1 << ") -> ("
+		<< brx1 << ", " <<bry1 << ")" << endl; 
+	if (_IMM_DEBUG) cout << "BB2: (" << tlx2 << ", " << tly2 << ") -> ("
+		<< brx2 << ", " <<bry2 << ")" << endl; 
+	
+	if (tlx2 < 0) {
+		double diff = 0-tlx2; 
+		tlx2 = tlx2+diff; 
+		tlx1 = tlx1+diff; 
+	}
+	if (tly2 < 0) {
+		double diff = 0-tly2; 
+		tly2 = tly2+diff; 
+		tly1 = tly1+diff; 
+	}
+	if (tlx1 < 0) {
+		double diff = 0-tlx1; 
+		tlx2 = tlx2+diff; 
+		tlx1 = tlx1+diff; 
+	}
+	if (tly1 < 0) {
+		double diff = 0-tly1; 
+		tly2 = tly2+diff; 
+		tly1 = tly1+diff; 
+	}
+	if (brx2 > r2size.width-1) {
+		double diff = r2size.width-1-brx2; 
+		brx2 = brx2+diff; 
+		brx1 = brx1+diff; 
+	}
+	if (bry2 > r2size.height-1) {
+		double diff = r2size.height-1-bry2; 
+		bry2 = bry2+diff; 
+		bry1 = bry1+diff; 
+	}
+	if (brx1 > r1size.width-1) {
+		double diff = r1size.width-1-brx1; 
+		brx2 = brx2+diff; 
+		brx1 = brx1+diff; 
+	}
+	if (bry1 > r1size.height-1) {
+		double diff = r1size.height-1-bry1; 
+		bry2 = bry2+diff; 
+		bry1 = bry1+diff; 
+	}
+	
+	if (_IMM_DEBUG) cout << "BB1: (" << tlx1 << ", " << tly1 << ") -> ("
+		<< brx1 << ", " <<bry1 << ")" << endl; 
+	if (_IMM_DEBUG) cout << "BB2: (" << tlx2 << ", " << tly2 << ") -> ("
+		<< brx2 << ", " <<bry2 << ")" << endl; 
+	
+	CvRect roi1 = cvRect((int)tlx1, (int)tly1, (int)brx1-(int)tlx1+1, (int)bry1-(int)tly1+1); 
+	CvRect roi2 = cvRect((int)tlx2, (int)tly2, (int)brx2-(int)tlx2+1, (int)bry2-(int)tly2+1); 
+	
+	vector<CvRect> retval; 
+	retval.push_back(roi1); 
+	retval.push_back(roi2); 
+	return retval; 
+	
+}

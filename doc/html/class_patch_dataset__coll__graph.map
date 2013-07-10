@@ -1,0 +1,5 @@
+<map id="G" name="G">
+<area shape="rect" id="node2" href="$class_image_data_set.html" title="Auxilliary Tool: A data structure for maintaining a list of image files and image labels to facilitat..." alt="" coords="5,5,120,35"/>
+<area shape="rect" id="node4" href="$class_detection_evaluator.html" title="Auxilliary Tool: A tool for evaluating the performance of a whole&#45;image&#45;object&#45;detector, such as a GentleBoostCascadedClassifier, for performance on an ImageDataSet." alt="" coords="144,5,288,35"/>
+<area shape="rect" id="node6" href="$class_patch_list.html" title="Auxilliary Tool: A class that does the necessary book keeping for filtering an image quickly at many ..." alt="" coords="312,5,392,35"/>
+</map>

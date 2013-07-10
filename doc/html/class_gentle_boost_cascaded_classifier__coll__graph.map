@@ -1,0 +1,7 @@
+<map id="G" name="G">
+<area shape="rect" id="node2" href="$class_gentle_boost_classifier.html" title=" &#160;Machine Perception Primitive: &#160;&#160;An implementation of a GentleBoost classifier for image patch class..." alt="" coords="5,120,163,149"/>
+<area shape="rect" id="node4" href="$class_image_data_set.html" title="Auxilliary Tool: A data structure for maintaining a list of image files and image labels to facilitat..." alt="" coords="172,5,287,35"/>
+<area shape="rect" id="node6" href="$class_patch_dataset.html" title="Auxilliary Tool: A tool for managing the data used in training GentleBoost classifiers." alt="" coords="351,120,460,149"/>
+<area shape="rect" id="node9" href="$class_detection_evaluator.html" title="Auxilliary Tool: A tool for evaluating the performance of a whole&#45;image&#45;object&#45;detector, such as a GentleBoostCascadedClassifier, for performance on an ImageDataSet." alt="" coords="328,5,472,35"/>
+<area shape="rect" id="node11" href="$class_patch_list.html" title="Auxilliary Tool: A class that does the necessary book keeping for filtering an image quickly at many ..." alt="" coords="496,5,576,35"/>
+</map>

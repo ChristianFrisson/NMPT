@@ -3,7 +3,7 @@ NMPT
 
 NMPT: Nick's Machine Perception Toolbox.
 
-CMake integration by Christian Frisson (UMONS / numediart).
+[CMake](https://cmake.org) integration by Christian Frisson (UMONS / numediart).
 
 License
 
